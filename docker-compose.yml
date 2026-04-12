@@ -1,0 +1,13 @@
+services:
+  wcl-uploader:
+    build: .
+    container_name: wcl-uploader
+    restart: unless-stopped
+    expose:
+      - "5050"
+    networks:
+      - npm_default
+
+networks:
+  npm_default:
+    external: true

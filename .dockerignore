@@ -1,0 +1,5 @@
+*.txt
+proxy/
+extracted/
+__pycache__/
+*.pyc

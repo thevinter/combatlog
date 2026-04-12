@@ -1,0 +1,9 @@
+services:
+  wcl-uploader:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    container_name: wcl-uploader
+    restart: unless-stopped
+    ports:
+      - "5050:5050"
