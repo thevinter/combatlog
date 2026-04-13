@@ -1,9 +1,7 @@
 // Usage:
-//   node parser-harness.js                 — loads parser-warcraft.js + parser-gamedata.js from disk (fallback)
-//   node parser-harness.js --from-stdin    — reads JSON {gamedataCode, parserCode} from first stdin line
+//   node parser-harness.js    — reads JSON {gamedataCode, parserCode} from first stdin line,
+//                                then switches to the command loop.
 
-const fs = require('fs');
-const path = require('path');
 const readline = require('readline');
 const vm = require('vm');
 
@@ -114,44 +112,32 @@ function startCommandLoop() {
     });
 }
 
-const fromStdin = process.argv.includes('--from-stdin');
+let buf = '';
+process.stdin.setEncoding('utf-8');
+process.stdin.on('readable', function onReadable() {
+    let chunk;
+    while ((chunk = process.stdin.read()) !== null) {
+        buf += chunk;
+        const nl = buf.indexOf('\n');
+        if (nl !== -1) {
+            const firstLine = buf.slice(0, nl);
+            const remainder = buf.slice(nl + 1);
+            process.stdin.removeListener('readable', onReadable);
+            process.stdin.pause();
 
-if (fromStdin) {
-
-    let buf = '';
-    process.stdin.setEncoding('utf-8');
-    process.stdin.on('readable', function onReadable() {
-        let chunk;
-        while ((chunk = process.stdin.read()) !== null) {
-            buf += chunk;
-            const nl = buf.indexOf('\n');
-            if (nl !== -1) {
-                const firstLine = buf.slice(0, nl);
-                const remainder = buf.slice(nl + 1);
-                process.stdin.removeListener('readable', onReadable);
-                process.stdin.pause();
-
-                try {
-                    const payload = JSON.parse(firstLine);
-                    if (payload.gamedataCode) vm.runInThisContext(payload.gamedataCode);
-                    if (payload.parserCode) vm.runInThisContext(payload.parserCode);
-                } catch (e) {
-                    respond({ ready: false, error: e.message });
-                    process.exit(1);
-                }
-                respond({ ready: true, parserVersion: typeof parserVersion !== 'undefined' ? parserVersion : 'unknown' });
-
-                if (remainder) process.stdin.unshift(Buffer.from(remainder, 'utf-8'));
-                startCommandLoop();
-                return;
+            try {
+                const payload = JSON.parse(firstLine);
+                if (payload.gamedataCode) vm.runInThisContext(payload.gamedataCode);
+                if (payload.parserCode) vm.runInThisContext(payload.parserCode);
+            } catch (e) {
+                respond({ ready: false, error: e.message });
+                process.exit(1);
             }
+            respond({ ready: true, parserVersion: typeof parserVersion !== 'undefined' ? parserVersion : 'unknown' });
+
+            if (remainder) process.stdin.unshift(Buffer.from(remainder, 'utf-8'));
+            startCommandLoop();
+            return;
         }
-    });
-} else {
-    const gamedataPath = path.join(__dirname, 'parser-gamedata.js');
-    if (fs.existsSync(gamedataPath)) eval(fs.readFileSync(gamedataPath, 'utf-8'));
-    const parserPath = path.join(__dirname, 'parser-warcraft.js');
-    eval(fs.readFileSync(parserPath, 'utf-8'));
-    respond({ ready: true, parserVersion: typeof parserVersion !== 'undefined' ? parserVersion : 'unknown' });
-    startCommandLoop();
-}
+    }
+});

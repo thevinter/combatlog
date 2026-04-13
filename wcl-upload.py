@@ -74,11 +74,11 @@ class WCLSession:
         print(f"Logged in as {self.user['userName']}")
         return result
 
-    def create_report(self, filename, start_time, end_time, region=2, visibility=2, guild_id=None):
+    def create_report(self, filename, start_time, end_time, region=2, visibility=2, guild_id=None, parser_version=PARSER_VERSION):
         _jitter_sleep()
         resp = self._request('POST', f'{BASE_URL}/desktop-client/create-report',
             json={
-                'clientVersion': CLIENT_VERSION, 'parserVersion': PARSER_VERSION,
+                'clientVersion': CLIENT_VERSION, 'parserVersion': parser_version,
                 'startTime': start_time, 'endTime': end_time,
                 'guildId': guild_id, 'fileName': os.path.basename(filename),
                 'serverOrRegion': region, 'visibility': visibility,
@@ -135,8 +135,38 @@ class WCLSession:
         )
 
 
+def fetch_parser_code(session):
+    """Fetch the latest parser JS + game data from WCL (requires authed session).
+    Returns (gamedata_code, parser_code, parser_version)."""
+    import re
+    ts = int(time.time() * 1000)
+    url = (f'{BASE_URL}/desktop-client/parser?id=1&ts={ts}'
+           '&gameContentDetectionEnabled=false&metersEnabled=false'
+           '&liveFightDataEnabled=false')
+    _jitter_sleep()
+    resp = session.request('GET', url, headers={'User-Agent': _user_agent()})
+    html = resp.text
+
+    m = re.search(
+        r'<script[^>]*>(.*?window\.gameContentTypes.*?)</script>', html, re.DOTALL)
+    gamedata_code = m.group(1).strip() if m else ''
+
+    m2 = re.search(r'src="(https://assets\.rpglogs\.com/js/parser-warcraft[^"]+)"', html)
+    if not m2:
+        raise RuntimeError('Could not find parser-warcraft JS URL in parser page')
+    parser_url = m2.group(1)
+    _jitter_sleep()
+    parser_code = session.get(parser_url, headers={'User-Agent': _user_agent()}).text
+
+    m3 = re.search(r'const parserVersion\s*=\s*(\d+)', html)
+    pv = int(m3.group(1)) if m3 else PARSER_VERSION
+
+    return gamedata_code, parser_code, pv
+
+
 class Parser:
-    def __init__(self):
+    def __init__(self, gamedata_code, parser_code):
+        """Start parser with dynamically fetched code injected via stdin."""
         self.proc = subprocess.Popen(
             ['node', PARSER_HARNESS],
             stdin=subprocess.PIPE,
@@ -145,6 +175,10 @@ class Parser:
             text=True,
             bufsize=1,
         )
+        payload = json.dumps({'gamedataCode': gamedata_code,
+                              'parserCode': parser_code})
+        self.proc.stdin.write(payload + '\n')
+        self.proc.stdin.flush()
         ready = self._read_response()
         if not ready.get('ready'):
             raise RuntimeError(f"Parser failed to start: {ready}")
@@ -252,19 +286,24 @@ def upload_log(filepath, email, password, region=2, visibility=2, guild_id=None)
     total_lines = len(all_lines)
     print(f"  {total_lines} lines")
 
-    # Start parser
+    # Login first (required to fetch parser)
+    print("Logging in to WarcraftLogs...")
+    session = WCLSession()
+    session.login(email, password)
+
+    # Fetch parser code dynamically from WCL
+    print("Fetching latest parser from WarcraftLogs...")
+    gamedata_code, parser_code, parser_version = fetch_parser_code(session.session)
+    print(f"  Parser v{parser_version} loaded")
+
+    # Start parser with fresh code
     print("Starting parser...")
-    parser = Parser()
+    parser = Parser(gamedata_code, parser_code)
     parser.clear_state()
 
     start_date = parse_start_date_from_filename(filename)
     if start_date:
         parser.set_start_date(start_date)
-
-    # Login
-    print("Logging in to WarcraftLogs...")
-    session = WCLSession()
-    session.login(email, password)
 
     segment_id = 1
     report_code = None
@@ -297,6 +336,7 @@ def upload_log(filepath, email, password, region=2, visibility=2, guild_id=None)
                 report_code = session.create_report(
                     filepath, start_time, end_time,
                     region=region, visibility=visibility, guild_id=guild_id,
+                    parser_version=parser_version,
                 )
                 print(f"  Report code: {report_code}")
 

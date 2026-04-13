@@ -168,18 +168,17 @@ class WCLSession:
 
 
 class Parser:
-    def __init__(self, gamedata_code=None, parser_code=None):
-        inject = gamedata_code is not None and parser_code is not None
-        cmd = ['node', PARSER_HARNESS] + (['--from-stdin'] if inject else [])
+    def __init__(self, gamedata_code, parser_code):
+        """Start parser with dynamically fetched code injected via stdin."""
         self.proc = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            ['node', PARSER_HARNESS],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, bufsize=1,
         )
-        if inject:
-            payload = json.dumps({'gamedataCode': gamedata_code,
-                                  'parserCode': parser_code})
-            self.proc.stdin.write(payload + '\n')
-            self.proc.stdin.flush()
+        payload = json.dumps({'gamedataCode': gamedata_code,
+                              'parserCode': parser_code})
+        self.proc.stdin.write(payload + '\n')
+        self.proc.stdin.flush()
         ready = self._read()
         if not ready.get('ready'):
             raise RuntimeError(f"Parser failed: {ready}")
