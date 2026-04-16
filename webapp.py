@@ -24,10 +24,33 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PARSER_HARNESS = os.path.join(SCRIPT_DIR, 'parser-harness.js')
 BATCH_SIZE = 5000
 BASE_URL = 'https://www.warcraftlogs.com'
-CLIENT_VERSION = os.environ.get('WCL_CLIENT_VERSION', '9.0.1')
+FALLBACK_CLIENT_VERSION = '9.0.1'
 CHROME_VERSION = os.environ.get('WCL_CHROME_VERSION', '134.0.6998.205')
 ELECTRON_VERSION = os.environ.get('WCL_ELECTRON_VERSION', '37.7.0')
 PARSER_VERSION = 59
+
+
+def _fetch_latest_client_version():
+    """Fetch the latest Archon client version from GitHub releases."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(
+            'https://api.github.com/repos/RPGLogs/Uploaders-archon/releases/latest',
+            headers={'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'wcl-upload'},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        version = data.get('name', '').strip()
+        if version:
+            print(f'Fetched latest Archon version: {version}')
+            return version
+    except Exception as e:
+        print(f'Warning: Could not fetch latest Archon version: {e}')
+    print(f'Using fallback client version: {FALLBACK_CLIENT_VERSION}')
+    return FALLBACK_CLIENT_VERSION
+
+
+CLIENT_VERSION = os.environ.get('WCL_CLIENT_VERSION') or _fetch_latest_client_version()
 
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 1.0
@@ -315,6 +338,11 @@ def upload_worker(job_id, filepath, filename, email, password, region, visibilit
         q.put(None)  # sentinel
         try: os.unlink(filepath)
         except: pass
+
+
+@app.errorhandler(413)
+def file_too_large(e):
+    return json.dumps({'error': 'File exceeds the 1 GB size limit.'}), 413, {'Content-Type': 'application/json'}
 
 
 @app.route('/')
@@ -1030,6 +1058,13 @@ document.getElementById('form').addEventListener('submit', async e => {
   e.preventDefault();
   const file = fi.files[0];
   if (!file) { dz.style.borderColor = 'var(--error)'; setTimeout(() => dz.style.borderColor = '', 1000); return; }
+  const MAX_SIZE = 1024 * 1024 * 1024;
+  if (file.size > MAX_SIZE) {
+    const errMsg = document.getElementById('error-msg');
+    errMsg.textContent = 'File exceeds the 1 GB size limit.';
+    errMsg.style.display = 'block';
+    return;
+  }
 
   saveCreds();
 
