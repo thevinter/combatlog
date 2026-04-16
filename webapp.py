@@ -22,7 +22,7 @@ app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024  # 1 GB
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PARSER_HARNESS = os.path.join(SCRIPT_DIR, 'parser-harness.js')
-BATCH_SIZE = 5000
+BATCH_SIZE = 100000
 BASE_URL = 'https://www.warcraftlogs.com'
 FALLBACK_CLIENT_VERSION = '9.0.1'
 CHROME_VERSION = os.environ.get('WCL_CHROME_VERSION', '134.0.6998.205')
@@ -56,10 +56,6 @@ MAX_RETRIES = 3
 RETRY_BASE_DELAY = 1.0
 
 
-def _jitter_sleep():
-    time.sleep(random.uniform(0.05, 0.25))
-
-
 def _random_boundary():
     return '----WebKitFormBoundary' + ''.join(
         random.choices(string.ascii_letters + string.digits, k=16))
@@ -79,7 +75,6 @@ def fetch_parser_code(session):
     url = (f'{BASE_URL}/desktop-client/parser?id=1&ts={ts}'
            '&gameContentDetectionEnabled=false&metersEnabled=false'
            '&liveFightDataEnabled=false')
-    _jitter_sleep()
     resp = session.request('GET', url, headers={'User-Agent': _user_agent()})
     html = resp.text
 
@@ -91,7 +86,6 @@ def fetch_parser_code(session):
     if not m2:
         raise RuntimeError('Could not find parser-warcraft JS URL in parser page')
     parser_url = m2.group(1)
-    _jitter_sleep()
     parser_code = session.get(parser_url, headers={'User-Agent': _user_agent()}).text
 
     m3 = re.search(r'const parserVersion\s*=\s*(\d+)', html)
@@ -121,7 +115,6 @@ class WCLSession:
         resp.raise_for_status()
 
     def login(self, email, password):
-        _jitter_sleep()
         resp = self._request('POST', f'{BASE_URL}/desktop-client/log-in',
             json={'email': email, 'password': password, 'version': CLIENT_VERSION},
             headers={'Content-Type': 'application/json', 'User-Agent': _user_agent()},
@@ -131,7 +124,6 @@ class WCLSession:
         return result
 
     def create_report(self, filename, start_time, end_time, region, visibility, guild_id, parser_version=PARSER_VERSION):
-        _jitter_sleep()
         resp = self._request('POST', f'{BASE_URL}/desktop-client/create-report',
             json={
                 'clientVersion': CLIENT_VERSION, 'parserVersion': parser_version,
@@ -154,7 +146,6 @@ class WCLSession:
             body.extend(data)
             body.extend(b'\r\n')
         body.extend(f'--{boundary}--\r\n'.encode())
-        _jitter_sleep()
         return self._request('POST', url,
             data=bytes(body),
             headers={
@@ -184,7 +175,6 @@ class WCLSession:
         return resp.json().get('nextSegmentId', seg_id + 1)
 
     def terminate_report(self, code):
-        _jitter_sleep()
         self._request('POST', f'{BASE_URL}/desktop-client/terminate-report/{code}',
             headers={'User-Agent': _user_agent()},
         )
@@ -233,7 +223,7 @@ class Parser:
 
 def make_zip(s):
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         zf.writestr('log.txt', s)
     return buf.getvalue()
 
@@ -295,6 +285,7 @@ def upload_worker(job_id, filepath, filename, email, password, region, visibilit
 
         segment_id = 1
         report_code = None
+        last_master_ids = None
         total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
 
         for batch_idx, batch_start in enumerate(range(0, total, BATCH_SIZE)):
@@ -317,7 +308,11 @@ def upload_worker(job_id, filepath, filename, email, password, region, visibilit
                 emit('progress', {'step': 'report', 'message': f'Report created: {report_code}', 'pct': pct})
 
             mi = parser.collect_master_info()
-            session.set_master_table(report_code, segment_id, make_zip(build_master_string(mi, fd['logVersion'], fd['gameVersion'])))
+            master_ids = (mi['lastAssignedActorID'], mi['lastAssignedAbilityID'],
+                          mi['lastAssignedTupleID'], mi['lastAssignedPetID'])
+            if master_ids != last_master_ids:
+                session.set_master_table(report_code, segment_id, make_zip(build_master_string(mi, fd['logVersion'], fd['gameVersion'])))
+                last_master_ids = master_ids
             evts = sum(f['eventCount'] for f in fd['fights'])
             segment_id = session.add_segment(report_code, segment_id, fd['startTime'], fd['endTime'], fd['mythic'], make_zip(build_fights_string(fd)))
             parser.clear_fights()
