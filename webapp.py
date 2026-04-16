@@ -18,7 +18,7 @@ from curl_cffi import requests as cffi_requests
 from flask import Flask, request, Response, send_from_directory
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500 MB
+app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024  # 1 GB
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PARSER_HARNESS = os.path.join(SCRIPT_DIR, 'parser-harness.js')
