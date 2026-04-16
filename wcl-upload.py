@@ -174,6 +174,7 @@ class Parser:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            encoding='utf-8',
         )
         payload = json.dumps({'gamedataCode': gamedata_code,
                               'parserCode': parser_code})
