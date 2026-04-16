@@ -246,7 +246,7 @@ class Parser:
 
 def make_zip(content_str):
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         zf.writestr('log.txt', content_str)
     return buf.getvalue()
 
@@ -321,6 +321,7 @@ def upload_log(filepath, email, password, region=2, visibility=2, guild_id=None)
 
     segment_id = 1
     report_code = None
+    last_master_ids = None
 
     try:
         for batch_start in range(0, total_lines, BATCH_SIZE):
@@ -354,20 +355,30 @@ def upload_log(filepath, email, password, region=2, visibility=2, guild_id=None)
                 )
                 print(f"  Report code: {report_code}")
 
-            # Collect and upload master table
+            # Collect and upload master table (skip if IDs unchanged since last batch)
             master_info = parser.collect_master_info()
             if not master_info.get('ok'):
                 print(f"  Master info error: {master_info}")
                 return None
 
-            master_str = build_master_table_string(
-                master_info,
-                fights_data['logVersion'],
-                fights_data['gameVersion'],
+            master_ids = (
+                master_info['lastAssignedActorID'],
+                master_info['lastAssignedAbilityID'],
+                master_info['lastAssignedTupleID'],
+                master_info['lastAssignedPetID'],
             )
-            master_zip = make_zip(master_str)
-            print(f"  Uploading master table (segment {segment_id}, {len(master_zip)} bytes)...")
-            session.set_master_table(report_code, segment_id, master_zip)
+            if master_ids != last_master_ids:
+                master_str = build_master_table_string(
+                    master_info,
+                    fights_data['logVersion'],
+                    fights_data['gameVersion'],
+                )
+                master_zip = make_zip(master_str)
+                print(f"  Uploading master table (segment {segment_id}, {len(master_zip)} bytes)...")
+                session.set_master_table(report_code, segment_id, master_zip)
+                last_master_ids = master_ids
+            else:
+                print(f"  Master table unchanged, skipping upload")
 
             # Build and upload fights segment
             fights_str = build_fights_string(fights_data)
