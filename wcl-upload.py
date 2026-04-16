@@ -14,7 +14,7 @@ from curl_cffi import requests as cffi_requests
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PARSER_HARNESS = os.path.join(SCRIPT_DIR, 'parser-harness.js')
-BATCH_SIZE = 5000
+BATCH_SIZE = 100000
 BASE_URL = 'https://www.warcraftlogs.com'
 FALLBACK_CLIENT_VERSION = '9.0.1'
 CHROME_VERSION = os.environ.get('WCL_CHROME_VERSION', '134.0.6998.205')
@@ -46,10 +46,6 @@ CLIENT_VERSION = os.environ.get('WCL_CLIENT_VERSION') or _fetch_latest_client_ve
 
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 1.0
-
-
-def _jitter_sleep():
-    time.sleep(random.uniform(0.05, 0.25))
 
 
 def _random_boundary():
@@ -87,7 +83,6 @@ class WCLSession:
         resp.raise_for_status()
 
     def login(self, email, password):
-        _jitter_sleep()
         resp = self._request('POST', f'{BASE_URL}/desktop-client/log-in',
             json={'email': email, 'password': password, 'version': CLIENT_VERSION},
             headers={'Content-Type': 'application/json', 'User-Agent': _user_agent()},
@@ -98,7 +93,6 @@ class WCLSession:
         return result
 
     def create_report(self, filename, start_time, end_time, region=2, visibility=2, guild_id=None, parser_version=PARSER_VERSION):
-        _jitter_sleep()
         resp = self._request('POST', f'{BASE_URL}/desktop-client/create-report',
             json={
                 'clientVersion': CLIENT_VERSION, 'parserVersion': parser_version,
@@ -121,7 +115,6 @@ class WCLSession:
             body.extend(data)
             body.extend(b'\r\n')
         body.extend(f'--{boundary}--\r\n'.encode())
-        _jitter_sleep()
         return self._request('POST', url,
             data=bytes(body),
             headers={
@@ -152,7 +145,6 @@ class WCLSession:
         return resp.json().get('nextSegmentId', segment_id + 1)
 
     def terminate_report(self, report_code):
-        _jitter_sleep()
         self._request('POST', f'{BASE_URL}/desktop-client/terminate-report/{report_code}',
             headers={'User-Agent': _user_agent()},
         )
@@ -166,7 +158,6 @@ def fetch_parser_code(session):
     url = (f'{BASE_URL}/desktop-client/parser?id=1&ts={ts}'
            '&gameContentDetectionEnabled=false&metersEnabled=false'
            '&liveFightDataEnabled=false')
-    _jitter_sleep()
     resp = session.request('GET', url, headers={'User-Agent': _user_agent()})
     html = resp.text
 
@@ -178,7 +169,6 @@ def fetch_parser_code(session):
     if not m2:
         raise RuntimeError('Could not find parser-warcraft JS URL in parser page')
     parser_url = m2.group(1)
-    _jitter_sleep()
     parser_code = session.get(parser_url, headers={'User-Agent': _user_agent()}).text
 
     m3 = re.search(r'const parserVersion\s*=\s*(\d+)', html)
