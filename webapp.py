@@ -1077,8 +1077,8 @@ document.getElementById('form').addEventListener('submit', async e => {
   result.style.display = 'none';
   errMsg.style.display = 'none';
   log.textContent = '';
-  status.textContent = 'Sending file to local server...';
-  bar.style.width = '1%';
+  status.textContent = 'Preparing upload...';
+  bar.style.width = '0%';
   bar.className = 'bar-fill';
 
   const fd = new FormData();
@@ -1088,15 +1088,17 @@ document.getElementById('form').addEventListener('submit', async e => {
   fd.append('region', document.getElementById('region').value);
   fd.append('visibility', document.getElementById('visibility').value);
 
-  try {
-    const resp = await fetch('/upload', { method: 'POST', body: fd });
-    if (!resp.ok) throw new Error(await resp.text());
-    const { jobId } = await resp.json();
+  const setBar = pct => {
+    const cur = parseFloat(bar.style.width) || 0;
+    bar.style.width = Math.max(cur, pct) + '%';
+  };
+
+  const startSse = jobId => {
     const es = new EventSource('/events/' + jobId);
 
     es.addEventListener('progress', e => {
       const d = JSON.parse(e.data);
-      bar.style.width = d.pct + '%';
+      setBar(d.pct);
       status.textContent = d.message;
       log.textContent += d.message + '\n';
       log.scrollTop = log.scrollHeight;
@@ -1128,7 +1130,50 @@ document.getElementById('form').addEventListener('submit', async e => {
       btn.disabled = false;
       btn.textContent = 'Upload Log';
     });
+  };
 
+  const fail = msg => {
+    errMsg.textContent = msg;
+    errMsg.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Upload Log';
+  };
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/upload');
+
+  xhr.upload.addEventListener('progress', e => {
+    if (!e.lengthComputable) return;
+    const pct = (e.loaded / e.total) * 10;  // reserve 0-10% for client->server upload
+    setBar(pct);
+    status.textContent = `Sending file to local server... ${fmtSize(e.loaded)} / ${fmtSize(e.total)}`;
+  });
+
+  xhr.upload.addEventListener('load', () => {
+    setBar(10);
+    status.textContent = 'File received, starting upload to WarcraftLogs...';
+  });
+
+  xhr.addEventListener('load', () => {
+    if (xhr.status !== 200) {
+      let msg = xhr.responseText || 'Upload failed';
+      try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
+      fail(msg);
+      return;
+    }
+    try {
+      const { jobId } = JSON.parse(xhr.responseText);
+      startSse(jobId);
+    } catch (err) {
+      fail(err.message);
+    }
+  });
+
+  xhr.addEventListener('error', () => fail('Network error during upload'));
+  xhr.addEventListener('abort', () => fail('Upload aborted'));
+
+  try {
+    xhr.send(fd);
   } catch (err) {
     errMsg.textContent = err.message;
     errMsg.style.display = 'block';
