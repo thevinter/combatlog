@@ -1,0 +1,80 @@
+name: app
+
+on:
+  push:
+    branches: [main, tauri]
+    tags: ["v*"]
+    paths:
+      - app/**
+      - parser-harness.js
+      - .github/workflows/app.yml
+  pull_request:
+    paths:
+      - app/**
+      - parser-harness.js
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux system deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            pkg-config
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/src-tauri/target
+          key: ${{ matrix.os }}-cargo-${{ hashFiles('app/src-tauri/Cargo.lock', 'app/src-tauri/Cargo.toml') }}
+
+      - name: Stage Node sidecar + parser-harness
+        run: bash app/scripts/prepare-sidecar.sh ${{ matrix.target }}
+
+      - name: Install tauri-cli
+        run: cargo install --locked tauri-cli --version "^2"
+
+      - name: Generate icons from source PNG
+        working-directory: app
+        run: cargo tauri icon src-tauri/icons/icon.png
+
+      - name: Build Tauri app
+        working-directory: app
+        run: cargo tauri build --target ${{ matrix.target }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: combatlog-${{ matrix.target }}
+          path: |
+            app/src-tauri/target/${{ matrix.target }}/release/bundle/**/*
+          if-no-files-found: error

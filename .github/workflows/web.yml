@@ -1,0 +1,24 @@
+name: web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - web/**
+      - parser-harness.js
+      - docker-compose*.yml
+      - .github/workflows/web.yml
+  pull_request:
+    paths:
+      - web/**
+      - parser-harness.js
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -f web/Dockerfile -t combatlog-web:ci .
+      - name: Build local image
+        run: docker build -f web/Dockerfile.local -t combatlog-web-local:ci .
