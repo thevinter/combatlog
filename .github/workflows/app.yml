@@ -63,7 +63,7 @@ jobs:
       - name: Install tauri-cli
         uses: taiki-e/install-action@v2
         with:
-          tool: tauri-cli@^2
+          tool: tauri-cli
 
       - name: Generate icons from source PNG
         working-directory: app
