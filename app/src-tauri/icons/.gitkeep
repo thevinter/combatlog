@@ -1,0 +1,2 @@
+Icons are generated from a source PNG via `cargo tauri icon <source.png>`.
+Run that command before `cargo tauri build` or let the CI workflow do it.

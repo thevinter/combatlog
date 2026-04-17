@@ -1,6 +1,8 @@
 services:
   wcl-uploader:
-    build: .
+    build:
+      context: .
+      dockerfile: web/Dockerfile
     container_name: wcl-uploader
     restart: unless-stopped
     expose:

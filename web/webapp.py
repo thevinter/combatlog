@@ -21,7 +21,9 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024  # 1 GB
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PARSER_HARNESS = os.path.join(SCRIPT_DIR, 'parser-harness.js')
+_LOCAL_HARNESS = os.path.join(SCRIPT_DIR, 'parser-harness.js')
+_REPO_HARNESS = os.path.normpath(os.path.join(SCRIPT_DIR, '..', 'parser-harness.js'))
+PARSER_HARNESS = _LOCAL_HARNESS if os.path.exists(_LOCAL_HARNESS) else _REPO_HARNESS
 BATCH_SIZE = 100000
 BASE_URL = 'https://www.warcraftlogs.com'
 FALLBACK_CLIENT_VERSION = '9.0.1'

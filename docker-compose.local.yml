@@ -2,7 +2,7 @@ services:
   wcl-uploader:
     build:
       context: .
-      dockerfile: Dockerfile.local
+      dockerfile: web/Dockerfile.local
     container_name: wcl-uploader
     restart: unless-stopped
     ports:
