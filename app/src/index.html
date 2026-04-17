@@ -166,15 +166,30 @@
   .row { display: flex; gap: 12px; }
   .row > .field { flex: 1; margin-bottom: 0; }
 
-  .remember {
-    display: flex; align-items: center; gap: 8px;
-    margin-top: 4px; margin-bottom: 16px;
-    cursor: pointer; font-size: .78rem; color: var(--text-dim);
-    user-select: none;
+  .logged-in-panel {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 12px 14px; margin-bottom: 16px;
+    border: 1px solid var(--border); border-radius: 3px;
+    background: var(--accent-tint);
   }
-  .remember input[type="checkbox"] {
-    width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer;
+  .logged-in-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .logged-in-label {
+    font-size: .65rem; font-weight: 500;
+    color: var(--text-dim); letter-spacing: .08em; text-transform: uppercase;
   }
+  .logged-in-email {
+    font-family: 'Fira Code', monospace;
+    font-size: .85rem; color: var(--text-bright);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .logout-btn {
+    flex-shrink: 0; padding: 6px 14px;
+    border: 1px solid var(--border); border-radius: 3px;
+    background: transparent; color: var(--text-dim);
+    font-family: 'Lexend', sans-serif; font-size: .72rem;
+    cursor: pointer; transition: all .15s;
+  }
+  .logout-btn:hover { border-color: var(--accent); color: var(--accent); }
 
   .dropzone {
     position: relative;
@@ -204,6 +219,7 @@
     font-size: .78rem; color: var(--accent); word-break: break-all;
   }
   .dropzone .fileinfo .size { color: var(--text-dim); font-weight: 400; }
+  .dropzone input[type="file"] { display: none; }
 
   .btn {
     width: 100%; padding: 13px 20px;
@@ -303,19 +319,25 @@
     </div>
 
     <form id="form" autocomplete="on">
-      <div class="field">
-        <label for="email">Email</label>
-        <input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com">
+      <div id="loggedInPanel" class="logged-in-panel" style="display:none">
+        <div class="logged-in-info">
+          <span class="logged-in-label">Logged in as</span>
+          <span class="logged-in-email" id="loggedInEmail"></span>
+        </div>
+        <button type="button" id="logoutBtn" class="logout-btn">Logout</button>
       </div>
 
-      <div class="field">
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password" required autocomplete="current-password">
-      </div>
+      <div id="loginFields">
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com">
+        </div>
 
-      <label class="remember">
-        <input type="checkbox" id="rememberMe" checked> Remember credentials
-      </label>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" required autocomplete="current-password">
+        </div>
+      </div>
 
       <div class="row field">
         <div class="field">
@@ -352,6 +374,7 @@
             Drop your <strong>WoWCombatLog</strong> here<br>or click to browse
           </div>
           <div class="fileinfo" id="fileinfo"></div>
+          <input type="file" id="logfile" accept=".txt">
         </div>
       </div>
 
@@ -374,20 +397,23 @@
   </div>
 </div>
 
-<script type="module">
-const { invoke } = window.__TAURI__.core;
-const { listen } = window.__TAURI__.event;
-const { getCurrentWebview } = window.__TAURI__.webview;
-const openUrl = (url) => invoke('open_url', { url });
+<script>
+const isTauri = !!(window.__TAURI__ && window.__TAURI__.core);
+let invoke, listen, getCurrentWebview, openUrl;
+if (isTauri) {
+  invoke = window.__TAURI__.core.invoke;
+  listen = window.__TAURI__.event.listen;
+  getCurrentWebview = window.__TAURI__.webview.getCurrentWebview;
+  openUrl = (url) => invoke('open_url', { url });
+}
 
-/* ── theme toggle ── */
 const THEME_KEY = 'wcl_theme';
 function applyTheme(t) {
   document.documentElement.setAttribute('data-theme', t);
   localStorage.setItem(THEME_KEY, t);
 }
-const saved = localStorage.getItem(THEME_KEY);
-if (saved) applyTheme(saved);
+const savedTheme = localStorage.getItem(THEME_KEY);
+if (savedTheme) applyTheme(savedTheme);
 else if (window.matchMedia('(prefers-color-scheme: dark)').matches) applyTheme('dark');
 
 document.getElementById('themeToggle').addEventListener('click', () => {
@@ -395,21 +421,20 @@ document.getElementById('themeToggle').addEventListener('click', () => {
   applyTheme(cur === 'light' ? 'dark' : 'light');
 });
 
-/* ── credentials persistence ── */
 const STORE_KEY = 'wcl_upload_creds';
+function readCreds() {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || null; }
+  catch { return null; }
+}
 function loadCreds() {
-  try {
-    const d = JSON.parse(localStorage.getItem(STORE_KEY));
-    if (d) {
-      document.getElementById('email').value = d.email || '';
-      document.getElementById('password').value = d.password || '';
-      if (d.region) document.getElementById('region').value = d.region;
-      if (d.visibility) document.getElementById('visibility').value = d.visibility;
-    }
-  } catch {}
+  const d = readCreds();
+  if (!d) return;
+  document.getElementById('email').value = d.email || '';
+  document.getElementById('password').value = d.password || '';
+  if (d.region) document.getElementById('region').value = d.region;
+  if (d.visibility) document.getElementById('visibility').value = d.visibility;
 }
 function saveCreds() {
-  if (!document.getElementById('rememberMe').checked) return;
   localStorage.setItem(STORE_KEY, JSON.stringify({
     email: document.getElementById('email').value,
     password: document.getElementById('password').value,
@@ -417,9 +442,27 @@ function saveCreds() {
     visibility: document.getElementById('visibility').value,
   }));
 }
+function updateLoginUI() {
+  const d = readCreds();
+  const loggedIn = !!(d && d.email && d.password);
+  const emailIn = document.getElementById('email');
+  const pwIn = document.getElementById('password');
+  document.getElementById('loggedInPanel').style.display = loggedIn ? 'flex' : 'none';
+  document.getElementById('loginFields').style.display = loggedIn ? 'none' : 'block';
+  emailIn.required = !loggedIn;
+  pwIn.required = !loggedIn;
+  if (loggedIn) document.getElementById('loggedInEmail').textContent = d.email;
+}
+function logout() {
+  localStorage.removeItem(STORE_KEY);
+  document.getElementById('email').value = '';
+  document.getElementById('password').value = '';
+  updateLoginUI();
+}
 loadCreds();
+updateLoginUI();
+document.getElementById('logoutBtn').addEventListener('click', logout);
 
-/* ── file size formatting ── */
 function fmtSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
@@ -427,9 +470,9 @@ function fmtSize(bytes) {
   return (bytes/1073741824).toFixed(2) + ' GB';
 }
 
-/* ── selected file state ── */
-let selected = null;  // { path, name, size } | null
+let selected = null;
 const dz = document.getElementById('dropzone');
+const fi = document.getElementById('logfile');
 const fileinfo = document.getElementById('fileinfo');
 
 function setSelected(info) {
@@ -443,36 +486,50 @@ function setSelected(info) {
   }
 }
 
-/* ── dropzone click → native picker ── */
-dz.addEventListener('click', async () => {
-  const info = await invoke('pick_log_file');
-  if (info) setSelected(info);
-});
-
-/* ── drag-drop via Tauri window events (browser dragover suppressed) ── */
-['dragenter', 'dragover', 'dragleave', 'drop'].forEach(ev =>
-  window.addEventListener(ev, e => e.preventDefault())
-);
-const webview = getCurrentWebview();
-webview.onDragDropEvent(async event => {
-  if (event.payload.type === 'over' || event.payload.type === 'enter') {
-    dz.classList.add('dragover');
-  } else if (event.payload.type === 'leave') {
-    dz.classList.remove('dragover');
-  } else if (event.payload.type === 'drop') {
-    dz.classList.remove('dragover');
-    const paths = event.payload.paths || [];
-    if (!paths.length) return;
-    try {
-      const info = await invoke('file_info', { path: paths[0] });
-      setSelected(info);
-    } catch (err) {
-      showError(String(err));
+if (isTauri) {
+  dz.addEventListener('click', async () => {
+    const info = await invoke('pick_log_file');
+    if (info) setSelected(info);
+  });
+  ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(ev =>
+    window.addEventListener(ev, e => e.preventDefault())
+  );
+  getCurrentWebview().onDragDropEvent(async event => {
+    if (event.payload.type === 'over' || event.payload.type === 'enter') {
+      dz.classList.add('dragover');
+    } else if (event.payload.type === 'leave') {
+      dz.classList.remove('dragover');
+    } else if (event.payload.type === 'drop') {
+      dz.classList.remove('dragover');
+      const paths = event.payload.paths || [];
+      if (!paths.length) return;
+      try {
+        const info = await invoke('file_info', { path: paths[0] });
+        setSelected(info);
+      } catch (err) {
+        showError(String(err));
+      }
     }
-  }
-});
+  });
+} else {
+  dz.addEventListener('click', () => fi.click());
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault();
+    dz.classList.remove('dragover');
+    if (e.dataTransfer.files.length) {
+      fi.files = e.dataTransfer.files;
+      const f = fi.files[0];
+      setSelected({ file: f, name: f.name, size: f.size });
+    }
+  });
+  fi.addEventListener('change', () => {
+    const f = fi.files[0];
+    if (f) setSelected({ file: f, name: f.name, size: f.size });
+  });
+}
 
-/* ── copy button ── */
 document.getElementById('copyBtn').addEventListener('click', function() {
   const url = document.getElementById('report-link').href;
   navigator.clipboard.writeText(url).then(() => {
@@ -482,7 +539,6 @@ document.getElementById('copyBtn').addEventListener('click', function() {
   });
 });
 
-/* ── progress helpers ── */
 const btn = document.getElementById('btn');
 const prog = document.getElementById('progress');
 const bar = document.getElementById('bar');
@@ -514,53 +570,36 @@ function finishUI() {
   btn.disabled = false;
   btn.textContent = 'Upload Log';
 }
+function showDone(url) {
+  bar.style.width = '100%';
+  bar.classList.add('done');
+  statusEl.textContent = '';
+  resultEl.style.display = 'block';
+  const link = document.getElementById('report-link');
+  link.href = url;
+  link.textContent = url;
+  if (isTauri) link.onclick = ev => { ev.preventDefault(); openUrl(url); };
+  finishUI();
+}
+function handleProgress(d) {
+  setBar(d.pct);
+  statusEl.textContent = d.message;
+  logEl.textContent += d.message + '\n';
+  logEl.scrollTop = logEl.scrollHeight;
+}
 
-/* ── upload ── */
-let unlisteners = [];
-async function attachListeners() {
-  // Clear any stale listeners from a previous run
-  unlisteners.forEach(fn => { try { fn(); } catch {} });
-  unlisteners = [];
-  unlisteners.push(await listen('upload:progress', e => {
-    const d = e.payload;
-    setBar(d.pct);
-    statusEl.textContent = d.message;
-    logEl.textContent += d.message + '\n';
-    logEl.scrollTop = logEl.scrollHeight;
-  }));
-  unlisteners.push(await listen('upload:done', e => {
-    const d = e.payload;
-    bar.style.width = '100%';
-    bar.classList.add('done');
-    statusEl.textContent = '';
-    resultEl.style.display = 'block';
-    const link = document.getElementById('report-link');
-    link.href = d.url;
-    link.textContent = d.url;
-    link.onclick = ev => { ev.preventDefault(); openUrl(d.url); };
-    finishUI();
-    unlisteners.forEach(fn => fn()); unlisteners = [];
-  }));
+async function tauriUpload() {
+  let unlisteners = [];
+  const cleanup = () => { unlisteners.forEach(fn => { try { fn(); } catch {} }); unlisteners = []; };
+  unlisteners.push(await listen('upload:progress', e => handleProgress(e.payload)));
+  unlisteners.push(await listen('upload:done', e => { showDone(e.payload.url); cleanup(); }));
   unlisteners.push(await listen('upload:error', e => {
-    const d = e.payload;
-    showError(d.message);
+    showError(e.payload.message);
     bar.classList.add('error');
     statusEl.textContent = 'Upload failed';
     finishUI();
-    unlisteners.forEach(fn => fn()); unlisteners = [];
+    cleanup();
   }));
-}
-
-document.getElementById('form').addEventListener('submit', async e => {
-  e.preventDefault();
-  if (!selected) {
-    dz.style.borderColor = 'var(--error)';
-    setTimeout(() => dz.style.borderColor = '', 1000);
-    return;
-  }
-  saveCreds();
-  resetUI();
-  await attachListeners();
   try {
     await invoke('start_upload', {
       args: {
@@ -575,7 +614,88 @@ document.getElementById('form').addEventListener('submit', async e => {
   } catch (err) {
     showError(String(err));
     finishUI();
+    cleanup();
   }
+}
+
+function webUpload() {
+  const fd = new FormData();
+  fd.append('logfile', selected.file);
+  fd.append('email', document.getElementById('email').value);
+  fd.append('password', document.getElementById('password').value);
+  fd.append('region', document.getElementById('region').value);
+  fd.append('visibility', document.getElementById('visibility').value);
+
+  const startSse = jobId => {
+    const es = new EventSource('/events/' + jobId);
+    es.addEventListener('progress', ev => handleProgress(JSON.parse(ev.data)));
+    es.addEventListener('done', ev => { showDone(JSON.parse(ev.data).url); es.close(); });
+    es.addEventListener('error', ev => {
+      try {
+        const d = JSON.parse(ev.data);
+        showError(d.message);
+        bar.classList.add('error');
+        statusEl.textContent = 'Upload failed';
+      } catch {}
+      es.close();
+      finishUI();
+    });
+  };
+
+  const fail = msg => { showError(msg); finishUI(); };
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/upload');
+  xhr.upload.addEventListener('progress', e => {
+    if (!e.lengthComputable) return;
+    const pct = (e.loaded / e.total) * 10;
+    setBar(pct);
+    statusEl.textContent = 'Sending file to local server... ' + fmtSize(e.loaded) + ' / ' + fmtSize(e.total);
+  });
+  xhr.upload.addEventListener('load', () => {
+    setBar(10);
+    statusEl.textContent = 'File received, starting upload to WarcraftLogs...';
+  });
+  xhr.addEventListener('load', () => {
+    if (xhr.status !== 200) {
+      let msg = xhr.responseText || 'Upload failed';
+      try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
+      fail(msg);
+      return;
+    }
+    try {
+      const { jobId } = JSON.parse(xhr.responseText);
+      startSse(jobId);
+    } catch (err) {
+      fail(err.message);
+    }
+  });
+  xhr.addEventListener('error', () => fail('Network error during upload'));
+  xhr.addEventListener('abort', () => fail('Upload aborted'));
+
+  try { xhr.send(fd); }
+  catch (err) { fail(err.message); }
+}
+
+document.getElementById('form').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (!selected) {
+    dz.style.borderColor = 'var(--error)';
+    setTimeout(() => dz.style.borderColor = '', 1000);
+    return;
+  }
+  if (!isTauri) {
+    const MAX_SIZE = 1024 * 1024 * 1024;
+    if (selected.size > MAX_SIZE) {
+      showError('File exceeds the 1 GB size limit.');
+      return;
+    }
+  }
+  saveCreds();
+  updateLoginUI();
+  resetUI();
+  if (isTauri) await tauriUpload();
+  else webUpload();
 });
 </script>
 </body>

@@ -6,7 +6,7 @@ RUN apt-get update && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY parser-harness.js web/webapp.py ./
+COPY parser-harness.js web/webapp.py app/src/index.html ./
 
 EXPOSE 5050
 
