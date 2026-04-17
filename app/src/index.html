@@ -397,13 +397,13 @@
   </div>
 </div>
 
-<script>
+<script type="module">
 const isTauri = !!(window.__TAURI__ && window.__TAURI__.core);
 let invoke, listen, getCurrentWebview, openUrl;
 if (isTauri) {
-  invoke = window.__TAURI__.core.invoke;
-  listen = window.__TAURI__.event.listen;
-  getCurrentWebview = window.__TAURI__.webview.getCurrentWebview;
+  invoke = window.__TAURI__.core?.invoke;
+  listen = window.__TAURI__.event?.listen;
+  getCurrentWebview = window.__TAURI__.webview?.getCurrentWebview;
   openUrl = (url) => invoke('open_url', { url });
 }
 
