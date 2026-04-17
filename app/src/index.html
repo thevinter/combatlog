@@ -558,11 +558,6 @@ document.getElementById('form').addEventListener('submit', async e => {
     setTimeout(() => dz.style.borderColor = '', 1000);
     return;
   }
-  const MAX_SIZE = 1024 * 1024 * 1024;
-  if (selected.size > MAX_SIZE) {
-    showError('File exceeds the 1 GB size limit.');
-    return;
-  }
   saveCreds();
   resetUI();
   await attachListeners();
