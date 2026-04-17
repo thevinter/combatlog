@@ -2,7 +2,7 @@ name: app
 
 on:
   push:
-    branches: [main, tauri]
+    branches: [main, tauri, overlay]
     tags: ["v*"]
     paths:
       - app/**
