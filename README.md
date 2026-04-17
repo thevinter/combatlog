@@ -66,6 +66,8 @@ Prereqs:
 - [Rust](https://rustup.rs) — `rustup-init.exe`, default `stable-x86_64-pc-windows-msvc` toolchain
 - Visual Studio Build Tools with the **Desktop development with C++** workload (provides the MSVC linker)
 - WebView2 Runtime (preinstalled on Windows 11 / 10 22H2+)
+- `cmake` — `boring-sys` (transitive dep via `rquest`) needs it. `winget install Kitware.CMake`
+- `nasm` and Strawberry Perl if the BoringSSL build complains. `winget install NASM.NASM StrawberryPerl.StrawberryPerl`
 - `cargo install tauri-cli --version "^2"`
 
 From a PowerShell prompt:
