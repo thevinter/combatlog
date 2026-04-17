@@ -12,11 +12,18 @@
     "withGlobalTauri": true,
     "windows": [
       {
+        "label": "main",
         "title": "combatlog.dev",
         "width": 520,
         "height": 760,
         "resizable": true,
-        "center": true
+        "center": true,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "shadow": false
       }
     ],
     "security": {

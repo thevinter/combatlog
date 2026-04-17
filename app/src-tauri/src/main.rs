@@ -4,13 +4,21 @@ mod parser;
 mod wcl;
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use anyhow::{anyhow, Context as _, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
+
+const DEFAULT_HOTKEY: &str = "Shift+Tab";
+
+struct OverlayState {
+    current_hotkey: Mutex<Option<Shortcut>>,
+}
 
 const BATCH_SIZE: usize = 100_000;
 const UPLOAD_UI_RESERVED_PCT: u32 = 10; // the first 10% are reserved for client-side read
@@ -92,6 +100,43 @@ fn describe_file(path: &std::path::Path) -> FileInfo {
     }
 }
 
+#[tauri::command]
+fn set_hotkey(
+    app: AppHandle,
+    accelerator: String,
+    state: tauri::State<OverlayState>,
+) -> Result<String, String> {
+    let new_shortcut: Shortcut = accelerator
+        .parse()
+        .map_err(|e| format!("invalid hotkey: {e}"))?;
+    let gs = app.global_shortcut();
+    let mut cur = state.current_hotkey.lock().unwrap();
+    if cur.as_ref() == Some(&new_shortcut) {
+        return Ok(accelerator);
+    }
+    gs.register(new_shortcut.clone()).map_err(|e| e.to_string())?;
+    if let Some(prev) = cur.take() {
+        let _ = gs.unregister(prev);
+    }
+    *cur = Some(new_shortcut);
+    Ok(accelerator)
+}
+
+#[tauri::command]
+fn get_hotkey(state: tauri::State<OverlayState>) -> Option<String> {
+    state
+        .current_hotkey
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|s| s.to_string())
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
 /// start upload
 #[tauri::command]
 async fn start_upload(app: AppHandle, args: UploadArgs) -> Result<(), String> {
@@ -108,15 +153,68 @@ async fn start_upload(app: AppHandle, args: UploadArgs) -> Result<(), String> {
 
 fn main() {
     tauri::Builder::default()
+        .manage(OverlayState {
+            current_hotkey: Mutex::new(None),
+        })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let state = app.state::<OverlayState>();
+                    let is_current = state
+                        .current_hotkey
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .map(|s| s == shortcut)
+                        .unwrap_or(false);
+                    if !is_current {
+                        return;
+                    }
+                    if let Some(win) = app.get_webview_window("main") {
+                        let visible = win.is_visible().unwrap_or(false);
+                        if visible {
+                            let _ = win.hide();
+                        } else {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    }
+                })
+                .build(),
+        )
+        .setup(|app| {
+            let handle = app.handle().clone();
+            match DEFAULT_HOTKEY.parse::<Shortcut>() {
+                Ok(shortcut) => match handle.global_shortcut().register(shortcut.clone()) {
+                    Ok(_) => {
+                        handle
+                            .state::<OverlayState>()
+                            .current_hotkey
+                            .lock()
+                            .unwrap()
+                            .replace(shortcut);
+                    }
+                    Err(e) => eprintln!("failed to register default hotkey {DEFAULT_HOTKEY}: {e}"),
+                },
+                Err(e) => eprintln!("invalid default hotkey {DEFAULT_HOTKEY}: {e}"),
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             app_version,
             pick_log_file,
             file_info,
             open_url,
-            start_upload
+            start_upload,
+            set_hotkey,
+            get_hotkey,
+            quit_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

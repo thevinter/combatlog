@@ -75,6 +75,26 @@
     transition: background .25s, color .25s;
   }
 
+  [data-overlay] html, [data-overlay] body { background: transparent; }
+  [data-overlay] body { padding: 12px; }
+  [data-overlay] .card { max-width: none; }
+  [data-overlay] .header { cursor: move; user-select: none; }
+  [data-overlay] .close-btn { display: flex; }
+
+  .close-btn {
+    position: fixed; top: 16px; right: 60px; z-index: 10;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-dim); cursor: pointer; padding: 0;
+    display: none; align-items: center; justify-content: center;
+    font-size: 12px; line-height: 1;
+    transition: all .15s;
+  }
+  .close-btn:hover { border-color: var(--error); color: var(--error); }
+
+  .overlay-only { display: none; }
+  [data-overlay] .overlay-only { display: block; }
+
   @keyframes rise {
     from { opacity: 0; transform: translateY(18px); }
     to   { opacity: 1; transform: translateY(0); }
@@ -311,11 +331,12 @@
   <span class="theme-toggle-icon sun">&#9728;</span>
   <span class="theme-toggle-icon moon">&#9790;</span>
 </button>
+<button class="close-btn" id="closeBtn" type="button" aria-label="Quit">&#10005;</button>
 <div class="card">
   <div class="card-body">
-    <div class="header">
-      <h1>combatlog<em>.dev</em></h1>
-      <div class="sub">a privacy conscious uploader for warcraftlogs</div>
+    <div class="header" data-tauri-drag-region>
+      <h1 data-tauri-drag-region>combatlog<em>.dev</em></h1>
+      <div class="sub" data-tauri-drag-region>a privacy conscious uploader for warcraftlogs</div>
     </div>
 
     <form id="form" autocomplete="on">
@@ -378,6 +399,11 @@
         </div>
       </div>
 
+      <div class="field overlay-only">
+        <label for="hotkey">Toggle Hotkey</label>
+        <input id="hotkey" type="text" placeholder="Shift+Tab" autocomplete="off" spellcheck="false">
+      </div>
+
       <button type="submit" id="btn" class="btn">Upload Log</button>
     </form>
 
@@ -399,13 +425,52 @@
 
 <script type="module">
 const isTauri = !!(window.__TAURI__ && window.__TAURI__.core);
-let invoke, listen, getCurrentWebview, openUrl;
+let invoke, listen, getCurrentWebview, getCurrentWindow, openUrl;
 if (isTauri) {
   invoke = window.__TAURI__.core?.invoke;
   listen = window.__TAURI__.event?.listen;
   getCurrentWebview = window.__TAURI__.webview?.getCurrentWebview;
+  getCurrentWindow = window.__TAURI__.window?.getCurrentWindow;
   openUrl = (url) => invoke('open_url', { url });
+  document.documentElement.setAttribute('data-overlay', '');
 }
+
+const HOTKEY_KEY = 'wcl_overlay_hotkey';
+async function initOverlay() {
+  if (!isTauri) return;
+
+  document.getElementById('closeBtn').addEventListener('click', () => invoke('quit_app'));
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      try { getCurrentWindow().hide(); } catch {}
+    }
+  });
+
+  const hotkeyInput = document.getElementById('hotkey');
+  const saved = localStorage.getItem(HOTKEY_KEY);
+  let current = saved || (await invoke('get_hotkey')) || 'Shift+Tab';
+  if (saved && saved !== await invoke('get_hotkey')) {
+    try { current = await invoke('set_hotkey', { accelerator: saved }); }
+    catch { current = await invoke('get_hotkey') || 'Shift+Tab'; }
+  }
+  hotkeyInput.value = current;
+
+  hotkeyInput.addEventListener('change', async () => {
+    const v = hotkeyInput.value.trim();
+    if (!v) return;
+    try {
+      const applied = await invoke('set_hotkey', { accelerator: v });
+      hotkeyInput.value = applied;
+      localStorage.setItem(HOTKEY_KEY, applied);
+      hotkeyInput.style.borderColor = '';
+    } catch (err) {
+      hotkeyInput.style.borderColor = 'var(--error)';
+      showError('Hotkey rejected: ' + err);
+    }
+  });
+}
+initOverlay();
 
 const THEME_KEY = 'wcl_theme';
 function applyTheme(t) {

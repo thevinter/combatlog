@@ -58,3 +58,22 @@ cargo tauri build
 ```
 
 Needs Rust (stable) and, on Linux, the usual webkit2gtk dev packages.
+
+### Windows (dev mode)
+
+Prereqs:
+
+- [Rust](https://rustup.rs) — `rustup-init.exe`, default `stable-x86_64-pc-windows-msvc` toolchain
+- Visual Studio Build Tools with the **Desktop development with C++** workload (provides the MSVC linker)
+- WebView2 Runtime (preinstalled on Windows 11 / 10 22H2+)
+- `cargo install tauri-cli --version "^2"`
+
+From a PowerShell prompt:
+
+```powershell
+cd app
+powershell -ExecutionPolicy Bypass -File scripts\prepare-sidecar.ps1
+cargo tauri dev
+```
+
+Run from native Windows (not WSL) — the overlay needs to draw on top of the Windows WoW client.
