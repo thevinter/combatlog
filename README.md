@@ -1,6 +1,6 @@
 # combatlog.dev
 
-A privacy-conscious combat log uploader for [WarcraftLogs](https://www.warcraftlogs.com). No telemetry, no analytics, no ads.
+A privacy-conscious combat log uploader for [WarcraftLogs](https://www.warcraftlogs.com), [FFLogs](https://www.fflogs.com/), [FellowshipLogs](https://www.fellowshiplogs.com/) and [ESOLogs](https://www.esologs.com/). No telemetry, no analytics, no ads.
 
 ## Desktop app
 
