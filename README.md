@@ -1,12 +1,22 @@
 # combatlog.dev
 
-A privacy-conscious combat log uploader for [WarcraftLogs](https://www.warcraftlogs.com), [FFLogs](https://www.fflogs.com/), [FellowshipLogs](https://www.fellowshiplogs.com/) and [ESOLogs](https://www.esologs.com/). No telemetry, no analytics, no ads.
+A privacy-conscious combat log uploader for all RPGLogs games. No telemetry, no analytics, no ads.
+
+Supported websites:
+
+- [WarcraftLogs](https://www.warcraftlogs.com)
+- [FFLogs](https://www.fflogs.com/)
+- [ESOLogs](https://www.esologs.com/)
+- [SWTORLogs](https://www.swtorlogs.com/)
+- [FellowshipLogs](https://www.fellowshiplogs.com/)
 
 ## Desktop app
 
-The easiest option if you just want to upload logs from your own machine. Grab the installer for your OS from the [Releases](../../releases) page:
+This is the easiest option if you just want to upload logs from your own machine.
 
-- **Windows** — `.msi` installer
+You can find the installer for your OS on the [Releases](../../releases) page:
+
+- **Windows** — `.msi` or `.exe` installer
 - **Linux** — `.deb`, `.rpm`, or `.AppImage`
 
 Credentials stay in local storage on your machine.
@@ -16,6 +26,8 @@ Credentials stay in local storage on your machine.
 **Requirements:** Docker + Docker Compose.
 
 ```bash
+git clone git@github.com:thevinter/combatlog.git
+cd combatlog
 docker compose -f docker-compose.local.yml up --build
 ```
 
@@ -24,6 +36,7 @@ Then open [http://localhost:5050](http://localhost:5050).
 ## CLI
 
 **Requirements:**
+
 - Python 3.10+
 - Node.js 18+
 - `curl_cffi` (`pip install curl_cffi`)
@@ -38,13 +51,14 @@ python3 wcl-upload.py WoWCombatLog-041225_203000.txt \
 
 **Options:**
 
-| Flag | Default | Description |
-|---|---|---|
-| `--email` | *(required)* | WarcraftLogs email |
-| `--password` | *(required)* | WarcraftLogs password |
-| `--region` | `2` | 1=US, 2=EU, 3=KR, 4=TW, 5=CN |
-| `--visibility` | `2` | 0=Public, 1=Private, 2=Unlisted |
-| `--guild-id` | *none* | Guild ID to associate the report with |
+| Flag           | Default      | Description                                                                                   |
+| -------------- | ------------ | --------------------------------------------------------------------------------------------- |
+| `--email`      | _(required)_ | Account email                                                                                 |
+| `--password`   | _(required)_ | Account password                                                                              |
+| `--game`       | `warcraft`   | `warcraft`, `ff`, `eso`, `swtor`, or `fellowship`                                             |
+| `--region`     | `2`          | WoW: 1=US, 2=EU, 3=KR, 4=TW, 5=CN. Other games might use their own codes (usually 1=NA, 2=EU) |
+| `--visibility` | `2`          | 0=Public, 1=Private, 2=Unlisted                                                               |
+| `--guild-id`   | _none_       | Guild ID to associate the report with                                                         |
 
 ## Building the desktop app from source
 
