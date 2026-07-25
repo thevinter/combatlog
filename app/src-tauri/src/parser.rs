@@ -136,6 +136,17 @@ impl Parser {
         check_ok(&r)
     }
 
+    /// events before this time (epoch ms) are excluded from fights.
+    pub async fn set_live_logging_start_time(&self, start_time_ms: i64) -> Result<()> {
+        let r = self
+            .exchange(json!({
+                "action": "set-live-logging-start-time",
+                "startTime": start_time_ms,
+            }))
+            .await?;
+        check_ok(&r)
+    }
+
     pub async fn parse_lines(&self, lines: &[String], region: i32) -> Result<()> {
         let r = self
             .exchange(json!({
@@ -147,13 +158,22 @@ impl Parser {
         check_ok(&r)
     }
 
-    pub async fn collect_fights(&self) -> Result<Value> {
+    pub async fn collect_fights(&self, push_fight_if_needed: bool) -> Result<Value> {
         let r = self
             .exchange(json!({
                 "action": "collect-fights",
-                "pushFightIfNeeded": true,
+                "pushFightIfNeeded": push_fight_if_needed,
                 "scanningOnly": false,
             }))
+            .await?;
+        check_ok(&r)?;
+        Ok(r)
+    }
+
+    /// events accumulated since the last completed fight, without flushing them.
+    pub async fn collect_in_progress_fight(&self) -> Result<Value> {
+        let r = self
+            .exchange(json!({"action": "collect-in-progress-fight"}))
             .await?;
         check_ok(&r)?;
         Ok(r)

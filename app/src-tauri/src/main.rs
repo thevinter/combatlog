@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod live;
 mod parser;
 mod wcl;
 
@@ -8,7 +9,7 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Context as _, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager as _};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -24,7 +25,6 @@ struct UploadArgs {
     region: i32,
     visibility: i32,
     guild_id: Option<i64>,
-    /// RPGLogs site id ("warcraft", "ff", "eso", ...). Defaults to warcraft.
     #[serde(default)]
     game: String,
 }
@@ -46,7 +46,6 @@ struct GuildOption {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LoginResult {
-    /// WCL account name; `null` means the credentials were rejected.
     user_name: Option<String>,
     guilds: Vec<GuildOption>,
 }
@@ -159,18 +158,185 @@ async fn start_upload(app: AppHandle, args: UploadArgs) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Default)]
+struct LiveLogState(std::sync::Mutex<(u64, Option<tokio::sync::watch::Sender<bool>>)>);
+
+/// native folder picker for the live log directory.
+#[tauri::command]
+async fn pick_log_directory(app: AppHandle) -> Option<FileInfo> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().pick_folder(move |path| {
+        let _ = tx.send(path);
+    });
+    let path = rx.await.ok().flatten()?;
+    let pb = path.as_path()?.to_path_buf();
+    Some(describe_file(&pb))
+}
+
+/// dir info
+#[tauri::command]
+fn dir_info(path: String) -> Result<FileInfo, String> {
+    let pb = std::path::PathBuf::from(&path);
+    if !pb.is_dir() {
+        return Err(format!("not a directory: {path}"));
+    }
+    Ok(describe_file(&pb))
+}
+
+#[tauri::command]
+async fn start_live_log(
+    app: AppHandle,
+    state: tauri::State<'_, LiveLogState>,
+    args: live::LiveLogArgs,
+) -> Result<(), String> {
+    let (rx, my_gen) = {
+        let mut guard = state.0.lock().unwrap();
+        if guard.1.as_ref().map(|tx| !tx.is_closed()).unwrap_or(false) {
+            return Err("live log already running".into());
+        }
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        guard.0 += 1;
+        guard.1 = Some(tx);
+        (rx, guard.0)
+    };
+    tokio::spawn(async move {
+        if let Err(e) = live::run_live_log(app.clone(), args, rx).await {
+            let _ = app.emit("live:error", json!({"message": format!("{e:#}")}));
+        }
+        let state = app.state::<LiveLogState>();
+        let mut guard = state.0.lock().unwrap();
+        if guard.0 == my_gen {
+            guard.1 = None;
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_live_log(state: tauri::State<'_, LiveLogState>) -> Result<(), String> {
+    match state.0.lock().unwrap().1.take() {
+        Some(tx) => {
+            let _ = tx.send(true);
+            Ok(())
+        }
+        None => Err("no live log running".into()),
+    }
+}
+
+#[cfg(windows)]
+fn set_caption_color(window: &tauri::WebviewWindow, color: u32) {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+    };
+    let Ok(hwnd) = window.hwnd() else { return };
+    let hwnd = hwnd.0 as *mut core::ffi::c_void;
+    unsafe {
+        DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR as u32, &color as *const u32 as _, 4);
+        DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR as u32, &color as *const u32 as _, 4);
+    }
+}
+
+/// COLORREF (0x00BBGGRR) of the page --bg: light #f4f4f6, dark #101014.
+#[cfg(windows)]
+fn caption_color_for(dark: bool) -> u32 {
+    if dark { 0x0014_1010 } else { 0x00F6_F4F4 }
+}
+
+#[cfg(windows)]
+static CAPTION_STATE: std::sync::Mutex<(u32, u32)> = std::sync::Mutex::new((0, u32::MAX)); // (epoch, current color)
+
+#[cfg(windows)]
+fn fade_caption_color(window: tauri::WebviewWindow, target: u32) {
+    let (epoch, start) = {
+        let mut s = CAPTION_STATE.lock().unwrap();
+        s.0 += 1;
+        let start = if s.1 == u32::MAX { target } else { s.1 };
+        s.1 = target;
+        (s.0, start)
+    };
+    if start == target {
+        set_caption_color(&window, target);
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        const STEPS: u32 = 6;
+        let (sr, sg, sb) = (start & 0xFF, (start >> 8) & 0xFF, (start >> 16) & 0xFF);
+        let (tr, tg, tb) = (target & 0xFF, (target >> 8) & 0xFF, (target >> 16) & 0xFF);
+        for i in 1..=STEPS {
+            if CAPTION_STATE.lock().unwrap().0 != epoch {
+                return; 
+            }
+            let lerp = |a: u32, b: u32| (a as i64 + (b as i64 - a as i64) * i as i64 / STEPS as i64) as u32;
+            let c = lerp(sr, tr) | (lerp(sg, tg) << 8) | (lerp(sb, tb) << 16);
+            set_caption_color(&window, c);
+            tokio::time::sleep(std::time::Duration::from_millis(16)).await;
+        }
+    });
+}
+
+#[cfg(windows)]
+fn strip_titlebar_icon(window: &tauri::WebviewWindow) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SendMessageW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE,
+        ICON_SMALL, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_SETICON,
+        WS_EX_DLGMODALFRAME,
+    };
+    let Ok(hwnd) = window.hwnd() else { return };
+    let hwnd = hwnd.0 as *mut core::ffi::c_void;
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_DLGMODALFRAME as isize);
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, 0);
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+        );
+    }
+}
+
+#[tauri::command]
+fn set_titlebar_theme(window: tauri::WebviewWindow, dark: bool) {
+    #[cfg(windows)]
+    fade_caption_color(window, caption_color_for(dark));
+    #[cfg(not(windows))]
+    let _ = (window, dark);
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(LiveLogState::default())
+        .setup(|app| {
+            #[cfg(windows)]
+            if let Some(win) = app.get_webview_window("main") {
+                strip_titlebar_icon(&win);
+                let dark = matches!(win.theme(), Ok(tauri::Theme::Dark));
+                let color = caption_color_for(dark);
+                CAPTION_STATE.lock().unwrap().1 = color;
+                set_caption_color(&win, color);
+            }
+            let _ = app;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             app_version,
             pick_log_file,
             file_info,
             open_url,
             fetch_guilds,
-            start_upload
+            start_upload,
+            pick_log_directory,
+            dir_info,
+            start_live_log,
+            stop_live_log,
+            set_titlebar_theme
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -257,7 +423,7 @@ async fn run_upload(app: &AppHandle, args: UploadArgs) -> Result<()> {
             + (80 * batch_num as u32 / total_batches.max(1) as u32);
 
         parser.parse_lines(&chunk.to_vec(), args.region).await?;
-        let fd = parser.collect_fights().await?;
+        let fd = parser.collect_fights(true).await?;
         let fights = fd.get("fights").and_then(|v| v.as_array());
         if fights.map(|a| a.is_empty()).unwrap_or(true) {
             emit_progress(
@@ -294,18 +460,13 @@ async fn run_upload(app: &AppHandle, args: UploadArgs) -> Result<()> {
         let code = report_code.as_deref().unwrap();
 
         let mi = parser.collect_master_info().await?;
-        let master_ids = (
-            mi.get("lastAssignedActorID").and_then(|v| v.as_i64()).unwrap_or(0),
-            mi.get("lastAssignedAbilityID").and_then(|v| v.as_i64()).unwrap_or(0),
-            mi.get("lastAssignedTupleID").and_then(|v| v.as_i64()).unwrap_or(0),
-            mi.get("lastAssignedPetID").and_then(|v| v.as_i64()).unwrap_or(0),
-        );
+        let master_ids = wcl::master_ids(&mi);
         if Some(master_ids) != last_master_ids {
             let log_version = fd.get("logVersion").and_then(|v| v.as_i64()).unwrap_or(0);
             let game_version = fd.get("gameVersion").and_then(|v| v.as_i64()).unwrap_or(0);
             let master = wcl::build_master_string(&mi, log_version, game_version);
             let zipped = wcl::make_zip(&master)?;
-            session.set_master_table(code, segment_id, zipped).await?;
+            session.set_master_table(code, segment_id, false, zipped).await?;
             last_master_ids = Some(master_ids);
         }
 
@@ -322,9 +483,10 @@ async fn run_upload(app: &AppHandle, args: UploadArgs) -> Result<()> {
 
         let fights_str = wcl::build_fights_string(&fd);
         let zipped = wcl::make_zip(&fights_str)?;
-        segment_id = session
-            .add_segment(code, segment_id, start_time, end_time, mythic, zipped)
+        let next = session
+            .add_segment(code, segment_id, start_time, end_time, mythic, false, false, 0, zipped)
             .await?;
+        segment_id = if next > 0 { next } else { segment_id + 1 };
         parser.clear_fights().await?;
         emit_progress(
             app,

@@ -307,6 +307,66 @@
         opacity: 0.9;
       }
 
+      .mode-switch {
+        display: none;
+        gap: 0;
+        margin-bottom: 20px;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      .mode-switch.visible {
+        display: flex;
+      }
+      .mode-switch button {
+        flex: 1;
+        padding: 9px 0;
+        border: none;
+        background: transparent;
+        color: var(--text-dim);
+        font-family: "Lexend", sans-serif;
+        font-size: 0.78rem;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .mode-switch button.active {
+        background: var(--accent);
+        color: #fff;
+      }
+      .mode-switch button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .field label.checkline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 10px 0 0;
+        cursor: pointer;
+        user-select: none;
+        text-transform: none;
+        letter-spacing: 0;
+      }
+      .field .checkline input[type="checkbox"] {
+        -webkit-appearance: auto;
+        appearance: auto;
+        width: 14px;
+        height: 14px;
+        padding: 0;
+        flex-shrink: 0;
+        accent-color: var(--accent);
+        cursor: pointer;
+        margin: 0;
+      }
+      .checkline span {
+        font-size: 0.78rem;
+        color: var(--text);
+        font-weight: 300;
+      }
+
       .field {
         margin-bottom: 16px;
       }
@@ -765,6 +825,13 @@
           </div>
 
           <div id="uploadSection" style="display: none">
+            <div class="mode-switch" id="modeSwitch">
+              <button type="button" id="modeUpload" class="active">
+                Upload Log
+              </button>
+              <button type="button" id="modeLive">Live Log</button>
+            </div>
+
             <div class="field" id="guildField">
               <label for="guild">Upload to</label>
               <select id="guild" name="guild"></select>
@@ -791,7 +858,7 @@
               </div>
             </div>
 
-            <div class="field">
+            <div class="field" id="uploadFields">
               <label>Combat Log</label>
               <div class="dropzone" id="dropzone">
                 <svg
@@ -812,12 +879,45 @@
                   <line x1="15" y1="15" x2="12" y2="12" />
                 </svg>
                 <div class="dropzone-text">
-                  Drop your <strong id="dropHint">WoWCombatLog</strong> here<br />or
-                  click to browse
+                  Drop your
+                  <strong id="dropHint">WoWCombatLog</strong> here<br />or click
+                  to browse
                 </div>
                 <div class="fileinfo" id="fileinfo"></div>
                 <input type="file" id="logfile" accept=".txt" />
               </div>
+            </div>
+
+            <div class="field" id="liveFields" style="display: none">
+              <label>Log Directory</label>
+              <div class="dropzone" id="liveDropzone">
+                <svg
+                  class="dropzone-icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"
+                  />
+                </svg>
+                <div class="dropzone-text">
+                  Drop your <strong>Logs</strong> folder here<br />or click to
+                  browse
+                </div>
+                <div class="fileinfo" id="liveDirInfo"></div>
+              </div>
+              <label class="checkline">
+                <input type="checkbox" id="includeExisting" />
+                <span>Include existing file contents in the report</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="fightEndOnly" />
+                <span>Upload only when a fight ends</span>
+              </label>
             </div>
 
             <button type="submit" id="btn" class="btn">Upload Log</button>
@@ -825,13 +925,15 @@
         </form>
 
         <div id="progress">
-          <div class="bar-track"><div class="bar-fill" id="bar"></div></div>
+          <div class="bar-track" id="barTrack">
+            <div class="bar-fill" id="bar"></div>
+          </div>
           <div id="status"></div>
           <div id="log"></div>
         </div>
 
         <div id="result">
-          <div class="label">Upload complete</div>
+          <div class="label" id="resultLabel">Upload complete</div>
           <a id="report-link" href="#" target="_blank"></a>
           <button class="copy-btn" id="copyBtn" type="button">Copy URL</button>
         </div>
@@ -854,6 +956,8 @@
       function applyTheme(t) {
         document.documentElement.setAttribute("data-theme", t);
         localStorage.setItem(THEME_KEY, t);
+        if (isTauri)
+          invoke("set_titlebar_theme", { dark: t === "dark" }).catch(() => {});
       }
       const savedTheme = localStorage.getItem(THEME_KEY);
       if (savedTheme) applyTheme(savedTheme);
@@ -867,10 +971,10 @@
       });
 
       // ---- Games -------------------------------------------------------------
-      // Every RPGLogs site shares one upload mechanism; only the endpoints (a
-      // per-game `game` id sent to the backend) and the region set differ.
-      // Region codes: WoW + FFLogs are verified; ESO/SWTOR follow the platform
-      // pattern (1=Americas, 2=EU). ESO's PTS is omitted (its code is unknown).
+      // Every RPGLogs site shares one upload mechanism; only the endpoints
+      // and the region set differ. Region codes: WoW + FFLogs are verified;
+      // For ESO/SWTOR I'm guessing the platform pattern (1=Americas, 2=EU). (TODO: test)
+      // I omitted ESO's PTS since I have no clue what it is.
       const GAMES = {
         warcraft: {
           name: "WARCRAFT",
@@ -993,7 +1097,8 @@
       const guildField = document.getElementById("guildField");
       const guildSel = document.getElementById("guild");
       // Guild lists are per-site, so the cache key is scoped by game + email.
-      const guildCacheKey = (email) => "wcl_guilds_" + currentGame + "_" + email;
+      const guildCacheKey = (email) =>
+        "wcl_guilds_" + currentGame + "_" + email;
       let guildReqId = 0;
 
       function currentCreds() {
@@ -1229,6 +1334,74 @@
       const fi = document.getElementById("logfile");
       const fileinfo = document.getElementById("fileinfo");
 
+      // --- live log mode ---
+      let mode = "upload";
+      let selectedDir = null;
+      let liveRunning = false;
+      const LIVE_KEY = "wcl_live_settings";
+      const liveDz = document.getElementById("liveDropzone");
+      const liveDirInfo = document.getElementById("liveDirInfo");
+      const includeExisting = document.getElementById("includeExisting");
+      const fightEndOnly = document.getElementById("fightEndOnly");
+
+      function setSelectedDir(info) {
+        selectedDir = info;
+        if (info) {
+          liveDz.classList.add("has-file");
+          liveDirInfo.textContent = info.path;
+        } else {
+          liveDz.classList.remove("has-file");
+          liveDirInfo.textContent = "";
+        }
+      }
+
+      function saveLiveSettings() {
+        localStorage.setItem(
+          LIVE_KEY,
+          JSON.stringify({
+            directory: selectedDir ? selectedDir.path : null,
+            includeExisting: includeExisting.checked,
+            fightEndOnly: fightEndOnly.checked,
+          }),
+        );
+      }
+
+      function loadLiveSettings() {
+        let d;
+        try {
+          d = JSON.parse(localStorage.getItem(LIVE_KEY)) || {};
+        } catch {
+          d = {};
+        }
+        if (d.directory)
+          setSelectedDir({ path: d.directory, name: d.directory, size: 0 });
+        if (typeof d.includeExisting === "boolean")
+          includeExisting.checked = d.includeExisting;
+        if (typeof d.fightEndOnly === "boolean")
+          fightEndOnly.checked = d.fightEndOnly;
+      }
+
+      function setMode(m) {
+        if (liveRunning) return;
+        mode = m;
+        document
+          .getElementById("modeUpload")
+          .classList.toggle("active", m === "upload");
+        document
+          .getElementById("modeLive")
+          .classList.toggle("active", m === "live");
+        document.getElementById("uploadFields").style.display =
+          m === "upload" ? "block" : "none";
+        document.getElementById("liveFields").style.display =
+          m === "live" ? "block" : "none";
+        btn.textContent = m === "upload" ? "Upload Log" : "Start Live Logging";
+      }
+
+      function setModeSwitchEnabled(on) {
+        document.getElementById("modeUpload").disabled = !on;
+        document.getElementById("modeLive").disabled = !on;
+      }
+
       function setSelected(info) {
         selected = info;
         if (info) {
@@ -1242,25 +1415,48 @@
       }
 
       if (isTauri) {
+        document.getElementById("modeSwitch").classList.add("visible");
+        document
+          .getElementById("modeUpload")
+          .addEventListener("click", () => setMode("upload"));
+        document
+          .getElementById("modeLive")
+          .addEventListener("click", () => setMode("live"));
+        loadLiveSettings();
+
         dz.addEventListener("click", async () => {
           const info = await invoke("pick_log_file");
           if (info) setSelected(info);
+        });
+        liveDz.addEventListener("click", async () => {
+          const info = await invoke("pick_log_directory");
+          if (info) {
+            setSelectedDir(info);
+            saveLiveSettings();
+          }
         });
         ["dragenter", "dragover", "dragleave", "drop"].forEach((ev) =>
           window.addEventListener(ev, (e) => e.preventDefault()),
         );
         getCurrentWebview().onDragDropEvent(async (event) => {
+          const zone = mode === "live" ? liveDz : dz;
           if (event.payload.type === "over" || event.payload.type === "enter") {
-            dz.classList.add("dragover");
+            zone.classList.add("dragover");
           } else if (event.payload.type === "leave") {
-            dz.classList.remove("dragover");
+            zone.classList.remove("dragover");
           } else if (event.payload.type === "drop") {
-            dz.classList.remove("dragover");
+            zone.classList.remove("dragover");
             const paths = event.payload.paths || [];
             if (!paths.length) return;
             try {
-              const info = await invoke("file_info", { path: paths[0] });
-              setSelected(info);
+              if (mode === "live") {
+                const info = await invoke("dir_info", { path: paths[0] });
+                setSelectedDir(info);
+                saveLiveSettings();
+              } else {
+                const info = await invoke("file_info", { path: paths[0] });
+                setSelected(info);
+              }
             } catch (err) {
               showError(String(err));
             }
@@ -1319,7 +1515,10 @@
       function resetUI() {
         btn.disabled = true;
         btn.textContent = "Uploading...";
+        setModeSwitchEnabled(false);
         prog.style.display = "block";
+        document.getElementById("barTrack").style.display = "block";
+        document.getElementById("resultLabel").textContent = "Upload complete";
         resultEl.style.display = "none";
         errMsg.style.display = "none";
         logEl.textContent = "";
@@ -1330,6 +1529,7 @@
       function finishUI() {
         btn.disabled = false;
         btn.textContent = "Upload Log";
+        setModeSwitchEnabled(true);
       }
       function showDone(url) {
         bar.style.width = "100%";
@@ -1349,8 +1549,118 @@
       function handleProgress(d) {
         setBar(d.pct);
         statusEl.textContent = d.message;
-        logEl.textContent += d.message + "\n";
+        appendLog(d.message);
+      }
+
+      function appendLog(m) {
+        logEl.textContent += m + "\n";
         logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      function resetLiveUI() {
+        btn.disabled = false;
+        btn.textContent = "Stop Live Logging";
+        prog.style.display = "block";
+        document.getElementById("barTrack").style.display = "none";
+        resultEl.style.display = "none";
+        errMsg.style.display = "none";
+        logEl.textContent = "";
+        statusEl.textContent = "";
+      }
+
+      function finishLiveUI() {
+        liveRunning = false;
+        btn.disabled = false;
+        btn.textContent = "Start Live Logging";
+        setModeSwitchEnabled(true);
+      }
+
+      async function startLive() {
+        let unlisteners = [];
+        const cleanup = () => {
+          unlisteners.forEach((fn) => {
+            try {
+              fn();
+            } catch {}
+          });
+          unlisteners = [];
+        };
+        unlisteners.push(
+          await listen("live:started", (e) => {
+            resultEl.style.display = "block";
+            document.getElementById("resultLabel").textContent = "Live report";
+            const link = document.getElementById("report-link");
+            link.href = e.payload.url;
+            link.textContent = e.payload.url;
+            link.onclick = (ev) => {
+              ev.preventDefault();
+              openUrl(e.payload.url);
+            };
+          }),
+        );
+        unlisteners.push(
+          await listen("live:progress", (e) => {
+            statusEl.textContent = e.payload.message;
+            appendLog(e.payload.message);
+          }),
+        );
+        unlisteners.push(
+          await listen("live:done", (e) => {
+            document.getElementById("resultLabel").textContent =
+              "Live log complete";
+            appendLog(
+              "Live log ended — " + e.payload.segments + " segments uploaded",
+            );
+            finishLiveUI();
+            cleanup();
+          }),
+        );
+        unlisteners.push(
+          await listen("live:error", (e) => {
+            showError(e.payload.message);
+            statusEl.textContent = "Live log failed";
+            finishLiveUI();
+            cleanup();
+          }),
+        );
+
+        liveRunning = true;
+        setModeSwitchEnabled(false);
+        resetLiveUI();
+        try {
+          await invoke("start_live_log", {
+            args: {
+              directory: selectedDir.path,
+              email: document.getElementById("email").value,
+              password: document.getElementById("password").value,
+              region: parseInt(document.getElementById("region").value, 10),
+              visibility: parseInt(
+                document.getElementById("visibility").value,
+                10,
+              ),
+              guildId: guildSel.value ? parseInt(guildSel.value, 10) : null,
+              includeEntireFileInReport: includeExisting.checked,
+              enableRealTimeUploading: !fightEndOnly.checked,
+              game: currentGame,
+            },
+          });
+        } catch (err) {
+          showError(String(err));
+          finishLiveUI();
+          cleanup();
+        }
+      }
+
+      async function stopLive() {
+        btn.disabled = true;
+        btn.textContent = "Stopping...";
+        appendLog("Stopping live log...");
+        try {
+          await invoke("stop_live_log");
+        } catch (err) {
+          showError(String(err));
+          finishLiveUI();
+        }
       }
 
       async function tauriUpload() {
@@ -1486,6 +1796,22 @@
 
       document.getElementById("form").addEventListener("submit", async (e) => {
         e.preventDefault();
+        if (mode === "live") {
+          if (liveRunning) {
+            await stopLive();
+            return;
+          }
+          if (!selectedDir) {
+            liveDz.style.borderColor = "var(--error)";
+            setTimeout(() => (liveDz.style.borderColor = ""), 1000);
+            return;
+          }
+          saveCreds();
+          saveLiveSettings();
+          updateLoginUI();
+          await startLive();
+          return;
+        }
         if (!selected) {
           dz.style.borderColor = "var(--error)";
           setTimeout(() => (dz.style.borderColor = ""), 1000);

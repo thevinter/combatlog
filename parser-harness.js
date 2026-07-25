@@ -78,6 +78,15 @@ function handleClassCommand(cmd) {
     case "set-report-code":
       respond({ ok: true });
       break;
+    // Live logging was built against the legacy warcraft bundle's globals.
+    // The new bundles haven't been yet verified so livelogging is not yet supproted.
+    case "set-live-logging-start-time":
+    case "collect-in-progress-fight":
+      respond({
+        ok: false,
+        error: `live logging is not supported by this game's parser (${cmd.action})`,
+      });
+      break;
     case "parse-lines": {
       classParser.prepareToParseLines(
         cmd.scanning || false,
@@ -162,6 +171,10 @@ function handleLegacyCommand(cmd) {
     case "set-report-code":
       respond({ ok: true });
       break;
+    case "set-live-logging-start-time":
+      liveLoggingStartTime = cmd.startTime;
+      respond({ ok: true });
+      break;
     case "parse-lines":
       for (let i = 0; i < cmd.lines.length; i++) {
         parsedLineCount++;
@@ -206,6 +219,27 @@ function handleLegacyCommand(cmd) {
         fights,
       });
       break;
+    case "collect-in-progress-fight": {
+      const inProgress =
+        lastAssignedEventID > currentEventIndex
+          ? [
+              {
+                eventCount: lastAssignedEventID - currentEventIndex,
+                eventsString,
+              },
+            ]
+          : [];
+      respond({
+        ok: true,
+        logVersion,
+        gameVersion,
+        mythic,
+        startTime,
+        endTime,
+        fights: inProgress,
+      });
+      break;
+    }
     case "collect-master-info":
       buildActorsString();
       if (typeof buildAbilitiesStringIfNeeded === "function")

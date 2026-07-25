@@ -1,6 +1,6 @@
 [package]
 name = "combatlog"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 description = "combatlog.dev — local WarcraftLogs uploader"
 default-run = "combatlog"
@@ -22,6 +22,9 @@ regex = "1"
 anyhow = "1"
 rand = "0.8"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging"] }
 
 [features]
 default = ["custom-protocol"]
