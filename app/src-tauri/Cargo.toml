@@ -1,6 +1,6 @@
 [package]
 name = "combatlog"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2021"
 description = "combatlog.dev — local WarcraftLogs uploader"
 default-run = "combatlog"
