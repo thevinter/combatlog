@@ -198,15 +198,30 @@ impl Parser {
 
 fn check_ok(v: &Value) -> Result<()> {
     if v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false) {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "parser error: {}",
-            v.get("error")
-                .and_then(|e| e.as_str())
-                .unwrap_or("unknown error")
-        ))
+        return Ok(());
     }
+    // harness reports parse failures as {ok:false, error, line, parsedLineCount};
+    let mut msg = String::from("parser error");
+    if let Some(n) = v.get("parsedLineCount").and_then(|n| n.as_i64()) {
+        msg.push_str(&format!(" at line {n}"));
+    }
+    match v.get("error").and_then(|e| e.as_str()).filter(|s| !s.is_empty()) {
+        Some(e) => msg.push_str(&format!(": {e}")),
+        None => msg.push_str(": line rejected (parser gave no message)"),
+    }
+    if let Some(line) = v.get("line").and_then(|l| l.as_str()) {
+        let line = line.trim();
+        if !line.is_empty() {
+            let snippet = if line.chars().count() > 200 {
+                let cut: String = line.chars().take(200).collect();
+                format!("{cut}…")
+            } else {
+                line.to_string()
+            };
+            msg.push_str(&format!("\n  offending line: {snippet}"));
+        }
+    }
+    Err(anyhow!(msg))
 }
 
 /// resolved from `tauri.conf.json` bundle.resources

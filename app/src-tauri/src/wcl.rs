@@ -85,9 +85,16 @@ pub struct WclSession {
 impl WclSession {
     pub async fn new(game_id: &str) -> Result<Self> {
         let game = game_by_id(game_id);
-        let client_version = fetch_latest_client_version()
-            .await
-            .unwrap_or_else(|_| FALLBACK_CLIENT_VERSION.to_string());
+        let client_version = match fetch_latest_client_version().await {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "[wcl] failed to fetch latest client version, \
+                     using fallback {FALLBACK_CLIENT_VERSION}: {e:#}"
+                );
+                FALLBACK_CLIENT_VERSION.to_string()
+            }
+        };
         let client = Client::builder()
             .emulation(Emulation::Chrome133)
             .cookie_store(true)
@@ -128,16 +135,39 @@ impl WclSession {
                     if (s == 429 || s >= 500) && attempt < MAX_RETRIES {
                         let base = RETRY_BASE_DELAY_MS * (1u64 << attempt);
                         let jitter: u64 = rand::thread_rng().gen_range(0..1000);
+                        eprintln!(
+                            "[wcl] HTTP {s} from {}, retrying in {}ms (attempt {}/{MAX_RETRIES})",
+                            r.url(),
+                            base + jitter,
+                            attempt + 1
+                        );
                         tokio::time::sleep(Duration::from_millis(base + jitter)).await;
                         continue;
                     }
+                    let url = r.url().clone();
                     let body = r.text().await.unwrap_or_default();
+                    let detail = serde_json::from_str::<Value>(&body)
+                        .ok()
+                        .as_ref()
+                        .and_then(api_error_message)
+                        .unwrap_or_else(|| {
+                            if body.trim().is_empty() {
+                                "(empty body)".to_string()
+                            } else {
+                                truncate(&body, 500)
+                            }
+                        });
                     return Err(anyhow::Error::new(HttpStatus(s))
-                        .context(format!("HTTP {s}: {}", truncate(&body, 500))));
+                        .context(format!("{detail} ({url})")));
                 }
                 Err(e) => {
                     if attempt < MAX_RETRIES {
                         let base = RETRY_BASE_DELAY_MS * (1u64 << attempt);
+                        eprintln!(
+                            "[wcl] request failed ({e}), retrying in {base}ms \
+                             (attempt {}/{MAX_RETRIES})",
+                            attempt + 1
+                        );
                         tokio::time::sleep(Duration::from_millis(base)).await;
                         continue;
                     }
@@ -161,8 +191,18 @@ impl WclSession {
                     .header("Content-Type", "application/json")
                     .json(&body),
             )
-            .await?;
-        Ok(resp.json::<LoginResponse>().await?)
+            .await
+            .context("log-in request failed")?;
+        let v = json_body(resp, "log-in").await?;
+        let login: LoginResponse = serde_json::from_value(v.clone()).with_context(|| {
+            format!("log-in: unexpected response shape: {}", truncate(&v.to_string(), 500))
+        })?;
+        if login.user.is_none() {
+            let detail =
+                api_error_message(&v).unwrap_or_else(|| truncate(&v.to_string(), 500));
+            return Err(anyhow!("login to {} failed: {detail}", self.game.base_url));
+        }
+        Ok(login)
     }
 
     pub async fn fetch_parser_code(&self) -> Result<ParserBundle> {
@@ -174,7 +214,10 @@ impl WclSession {
              &gameContentDetectionEnabled=false&metersEnabled=false&liveFightDataEnabled=false",
             self.game.base_url
         );
-        let resp = self.send_with_retry(self.client.get(&url)).await?;
+        let resp = self
+            .send_with_retry(self.client.get(&url))
+            .await
+            .context("fetching parser page failed")?;
         let html = resp.text().await?;
 
         let gamedata_re = Regex::new(r"(?s)<script[^>]*>(.*?window\.gameContentTypes.*?)</script>")?;
@@ -195,7 +238,13 @@ impl WclSession {
             .or_else(|| generic.captures(&html))
             .and_then(|c| c.get(1))
             .map(|m| m.as_str().to_string())
-            .context("parser script URL not found in parser page")?;
+            .with_context(|| {
+                format!(
+                    "parser script URL not found in parser page ({} bytes): {}",
+                    html.len(),
+                    truncate(&html, 300)
+                )
+            })?;
 
         let parser_resp = self.send_with_retry(self.client.get(&parser_url)).await?;
         let parser_code = parser_resp.text().await?;
@@ -243,12 +292,17 @@ impl WclSession {
                     .header("Content-Type", "application/json")
                     .json(&body),
             )
-            .await?;
-        let v: Value = resp.json().await?;
+            .await
+            .context("create-report request failed")?;
+        let v = json_body(resp, "create-report").await?;
         v.get("code")
             .and_then(|c| c.as_str())
             .map(|s| s.to_string())
-            .context("create-report response missing `code`")
+            .ok_or_else(|| {
+                let detail =
+                    api_error_message(&v).unwrap_or_else(|| truncate(&v.to_string(), 500));
+                anyhow!("create-report did not return a report code: {detail}")
+            })
     }
 
     pub async fn set_master_table(
@@ -316,10 +370,17 @@ impl WclSession {
                     )
                     .body(body),
             )
-            .await?;
-        let v: Value = resp.json().await?;
-        // 0 means "don't advance" (in-progress live segments get overwritten in place)
-        Ok(v.get("nextSegmentId").and_then(|n| n.as_i64()).unwrap_or(0))
+            .await
+            .context("add-report-segment request failed")?;
+        let v = json_body(resp, "add-report-segment").await?;
+        match v.get("nextSegmentId").and_then(|n| n.as_i64()) {
+            Some(next) => Ok(next),
+            None => match api_error_message(&v) {
+                Some(msg) => Err(anyhow!("add-report-segment failed: {msg}")),
+                // 0 means "don't advance" 
+                None => Ok(0),
+            },
+        }
     }
 
     pub async fn terminate_report(&self, code: &str) -> Result<()> {
@@ -471,10 +532,63 @@ pub fn parse_start_date(filename: &str) -> Option<String> {
     Some(format!("{mm}/{dd}/{}", 2000 + yy))
 }
 
+async fn json_body(resp: wreq::Response, what: &str) -> Result<Value> {
+    let status = resp.status().as_u16();
+    let url = resp.url().clone();
+    let text = resp
+        .text()
+        .await
+        .with_context(|| format!("{what}: failed reading response body from {url}"))?;
+    serde_json::from_str(&text).with_context(|| {
+        format!(
+            "{what}: HTTP {status} from {url} returned non-JSON body: {}",
+            truncate(&text, 500)
+        )
+    })
+}
+
+/// This is a best-effort extraction of an error message from the WCL JSON payload.
+/// Sadly can't guarantee for it to work every time
+fn api_error_message(v: &Value) -> Option<String> {
+    for key in ["error", "message", "reason"] {
+        if let Some(s) = v.get(key).and_then(|e| e.as_str()) {
+            if !s.is_empty() {
+                return Some(s.to_string());
+            }
+        }
+    }
+    if v.get("success").and_then(|b| b.as_bool()) == Some(false) {
+        return Some(format!("server reported failure: {}", truncate(&v.to_string(), 300)));
+    }
+    None
+}
+
 fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n])
+        let mut end = n;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &s[..end])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Run with: WCL_EMAIL=... WCL_PASSWORD=... cargo test login_error -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "hits the live WCL API; needs WCL_EMAIL/WCL_PASSWORD"]
+    async fn login_error_is_descriptive() {
+        let email = std::env::var("WCL_EMAIL").expect("WCL_EMAIL not set");
+        let password = std::env::var("WCL_PASSWORD").expect("WCL_PASSWORD not set");
+        let session = WclSession::new("warcraft").await.expect("session");
+        match session.login(&email, &password).await {
+            Ok(l) => println!("login OK as {:?}", l.user.and_then(|u| u.user_name)),
+            Err(e) => println!("login error: {e:#}"),
+        }
     }
 }

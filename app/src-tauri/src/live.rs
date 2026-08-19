@@ -523,12 +523,25 @@ where
                     .map(|s| s.0 == 401)
                     .unwrap_or(false);
                 if unauthorized {
-                    let _ = session.login(email, password).await;
+                    match session.login(email, password).await {
+                        Ok(_) => progress.emit(
+                            "retrying",
+                            format!("Session expired — logged in again (attempt {attempt})"),
+                        ),
+                        Err(login_err) => {
+                            eprintln!("[live] re-login failed: {login_err:#}");
+                            progress.emit(
+                                "retrying",
+                                format!("Session expired, re-login failed (attempt {attempt}): {login_err:#}"),
+                            );
+                        }
+                    }
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_secs(3)) => {}
                         _ = cancel.changed() => {}
                     }
                 } else {
+                    eprintln!("[live] upload failed (attempt {attempt}/{LIVE_RETRY_MAX}): {e:#}");
                     progress.emit("retrying", format!("Upload failed (attempt {attempt}): {e:#}"));
                     tokio::select! {
                         _ = tokio::time::sleep(LIVE_RETRY_DELAY) => {}
@@ -539,5 +552,8 @@ where
             }
         }
     }
-    Err(last_err.unwrap_or_else(|| anyhow!("upload failed")))
+    Err(match last_err {
+        Some(e) => e.context(format!("upload failed, giving up after {LIVE_RETRY_MAX} attempts")),
+        None => anyhow!("upload failed"),
+    })
 }

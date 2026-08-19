@@ -47,6 +47,12 @@ function respond(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
 }
 
+function errorMessage(e) {
+  if (e && e.message) return e.message;
+  const s = String(e);
+  return s === "[object Object]" ? "unknown parser error" : s;
+}
+
 let classParser = null;
 
 function newClassParser() {
@@ -104,7 +110,7 @@ function handleClassCommand(cmd) {
         } catch (e) {
           respond({
             ok: false,
-            error: e.message,
+            error: errorMessage(e),
             line: cmd.lines[i],
             parsedLineCount,
           });
@@ -189,7 +195,7 @@ function handleLegacyCommand(cmd) {
         } catch (e) {
           respond({
             ok: false,
-            error: e.message,
+            error: errorMessage(e),
             line: cmd.lines[i],
             parsedLineCount,
           });
