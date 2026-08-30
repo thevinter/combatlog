@@ -374,10 +374,15 @@ impl WclSession {
             .context("add-report-segment request failed")?;
         let v = json_body(resp, "add-report-segment").await?;
         match v.get("nextSegmentId").and_then(|n| n.as_i64()) {
+            // negative means the segment was refused and its payload discarded
+            Some(next) if next < 0 => Err(anyhow!(
+                "add-report-segment rejected segment {segment_id} (nextSegmentId={next}); \
+                 the server already committed that segment"
+            )),
             Some(next) => Ok(next),
             None => match api_error_message(&v) {
                 Some(msg) => Err(anyhow!("add-report-segment failed: {msg}")),
-                // 0 means "don't advance" 
+                // 0 means "don't advance"
                 None => Ok(0),
             },
         }

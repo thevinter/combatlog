@@ -226,11 +226,13 @@ function handleLegacyCommand(cmd) {
       });
       break;
     case "collect-in-progress-fight": {
+      // same guards as ipcCollectInProgressFight in the site's parser-page glue
+      const pending = lastAssignedEventID - currentEventIndex;
       const inProgress =
-        lastAssignedEventID > currentEventIndex
+        inCombat && pending > 1000
           ? [
               {
-                eventCount: lastAssignedEventID - currentEventIndex,
+                eventCount: pending,
                 eventsString,
               },
             ]

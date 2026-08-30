@@ -18,6 +18,7 @@ const IDLE_THRESHOLD: Duration = Duration::from_secs(120);
 const MAX_FILE_AGE: Duration = Duration::from_secs(6 * 3600);
 const MAX_CHUNK_LINES: usize = 5_000;
 const MAX_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
+const IN_PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
 const LIVE_RETRY_MAX: u32 = 120;
 const LIVE_RETRY_DELAY: Duration = Duration::from_secs(30);
 
@@ -133,6 +134,10 @@ pub async fn run_live_log(
     if let Some((code, _)) = &report {
         if let Err(e) = session.terminate_report(code).await {
             eprintln!("[live] terminate_report failed: {e:#}");
+            progress.emit(
+                "error",
+                format!("Report {code} could not be finalized on the server: {e:#}"),
+            );
         }
     }
 
@@ -205,6 +210,7 @@ async fn tail_loop(
         args,
         segment_id: 1,
         last_master_ids: None,
+        last_in_progress: None,
     };
 
     let mut current_path: Option<PathBuf> = None;
@@ -294,6 +300,27 @@ async fn tail_loop(
         }
         if chunk.lines.is_empty() {
             idle_sleep(cancel).await;
+        }
+    }
+
+    // uploads block the loop, so it can be well behind the game: drain what's left
+    if let Some(path) = current_path.as_ref() {
+        let size_at_stop = tokio::fs::metadata(path).await.map(|m| m.len()).unwrap_or(0);
+        if offset < size_at_stop {
+            progress.emit("uploading", "Stopping — reading the rest of the log...");
+            while offset < size_at_stop {
+                let Ok(chunk) = read_chunk(path, offset).await else {
+                    break;
+                };
+                if chunk.lines.is_empty() {
+                    break;
+                }
+                offset = chunk.new_offset;
+                if let Err(e) = uploader.upload_part(&chunk.lines, false, cancel, progress).await {
+                    eprintln!("[live] drain after stop failed: {e:#}");
+                    break;
+                }
+            }
         }
     }
 
@@ -395,6 +422,7 @@ struct Uploader<'a> {
     args: LiveLogArgs,
     segment_id: i64,
     last_master_ids: Option<(i64, i64, i64, i64)>,
+    last_in_progress: Option<Instant>,
 }
 
 impl Uploader<'_> {
@@ -424,6 +452,11 @@ impl Uploader<'_> {
             if !self.args.enable_real_time_uploading || !has_in_progress {
                 return Ok(());
             }
+            // each preview re-sends the whole fight so far, not a delta
+            if self.last_in_progress.map(|t| t.elapsed() < IN_PROGRESS_INTERVAL).unwrap_or(false) {
+                return Ok(());
+            }
+            self.last_in_progress = Some(Instant::now());
             in_progress_count = ip
                 .get("fights")
                 .and_then(|f| f.as_array())
@@ -484,9 +517,10 @@ impl Uploader<'_> {
             }
         })
         .await?;
-        if next > 0 {
-            // in-progress segments come back with 0 and get overwritten in place
-            self.segment_id = next;
+        // previews overwrite in place, so only a commit advances - and it must always
+        // advance, since the server refuses a second write to a committed id
+        if in_progress_count == 0 {
+            self.segment_id = next.max(segment_id + 1);
             progress.segments += 1;
             progress.emit("uploading", format!("Uploaded segment {}", progress.segments));
         }
