@@ -4,7 +4,6 @@ __pycache__/
 
 # Rust build output
 app/src-tauri/target/
-app/src-tauri/Cargo.lock
 
 # Node sidecar and staged parser harness are fetched at build time
 app/src-tauri/binaries/
